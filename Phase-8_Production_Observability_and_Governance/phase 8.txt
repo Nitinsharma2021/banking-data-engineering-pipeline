@@ -1,0 +1,401 @@
+PHASE 8 — COMPLETE IMPLEMENTATION GUIDE
+CloudWatch Monitoring + Custom Metrics + Anomaly Detection
+Ameriprise Bank Data Engineering Project (FINAL PHASE)
+================================================
+
+QUICK REVISION
+═══════════════
+Phase 2 ✅  S3 Data Lake (neo-bank-datalake bucket, ap-south-1)
+Phase 3 ✅  RDS SQL Server with 4 banking tables
+Phase 4 ✅  6 Silver Glue Visual ETL jobs
+Phase 5 ✅  7 Gold Glue Visual ETL jobs (star schema)
+Phase 6 ✅  Redshift Serverless 11 tables + Superset
+Phase 7 ✅  Step Functions + EventBridge orchestration
+Phase 8 ⬅️  THIS PHASE — CloudWatch monitoring + alerting (FINAL)
+
+
+WHAT PHASE 8 BUILDS
+════════════════════
+
+Adds production-grade observability to the entire pipeline:
+
+  CloudWatch Dashboards
+       ↓ visualize key metrics
+  Custom Lambda Metrics
+       ↓ extract DQ stats from S3 dq_results/
+  CloudWatch Alarms
+       ↓ alert on failures, slow runs, DQ breaches
+  Anomaly Detection
+       ↓ alert if row counts deviate from baseline
+  SNS Alerts (extends Phase 7 topic)
+       ↓ email + SMS on critical events
+
+
+COMPONENTS BUILT IN PHASE 8
+══════════════════════════════
+
+COMPONENT 1: 3 CloudWatch Dashboards
+  - Pipeline Overview Dashboard (executive view)
+  - Glue Jobs Detail Dashboard (operational view)
+  - Data Quality Dashboard (DQ engineer view)
+
+COMPONENT 2: 12 CloudWatch Alarms
+  3 critical alarms (immediate action):
+    - Pipeline failure (Step Functions)
+    - Pipeline timeout (>30 minutes)
+    - Multiple Glue job failures
+  6 warning alarms (review next morning):
+    - Slow individual job (>10 minutes)
+    - DQ pass rate dropped below 95%
+    - Quarantine rows spike (>50 rows)
+    - Redshift COPY failed
+    - Row count anomaly (10% deviation from baseline)
+    - High Glue DPU usage
+  3 info alarms (track for trends):
+    - Daily pipeline success
+    - Daily silver row count
+    - Daily gold row count
+
+COMPONENT 3: Custom Metrics Lambda
+  Reads metadata/dq_results/ JSON files
+  Extracts DQ pass/fail counts per table
+  Publishes to CloudWatch under custom namespace AmerispriseBank/ETL
+  Triggered by EventBridge after each pipeline run
+
+COMPONENT 4: Anomaly Detection
+  Auto-learns baseline row counts for each silver/gold table
+  Alarms if today's count deviates >2 standard deviations
+  No manual threshold tuning needed
+
+COMPONENT 5: Cost Tracking Dashboard
+  Daily Glue DPU usage
+  Redshift Serverless RPU consumption
+  S3 storage growth trend
+  Estimated monthly cost trajectory
+
+
+TOTAL Phase 8 incremental cost: ~$1-2/month
+
+
+EXECUTION ORDER
+════════════════
+  1.  Terminal → python step1_create_dashboards.py
+  2.  Terminal → python step2_create_alarms.py
+  3.  Terminal → python step3_deploy_metrics_lambda.py
+  4.  Terminal → python step4_setup_anomaly_detection.py
+  5.  Terminal → python step5_verify_monitoring.py
+  6.  Console  → View dashboards + test alarms
+
+
+PRE-REQUISITES
+═══════════════
+
+EXISTING (from Phase 7):
+  ✓ SNS topic: neo-bank-etl-alerts (with confirmed email)
+  ✓ Step Functions: neo-bank-etl-orchestrator
+  ✓ EventBridge schedule: neo-bank-daily-etl
+  ✓ All 13 Glue jobs running
+
+REQUIRED FOR PHASE 8:
+  Python venv active with boto3
+  AWS credentials configured (aws configure)
+
+
+STEP 1 — CREATE CLOUDWATCH DASHBOARDS
+═══════════════════════════════════════
+
+Script: step1_create_dashboards.py
+
+What it creates:
+
+DASHBOARD 1: NeoBank-Pipeline-Overview
+  Executive view, single screen for daily standup
+  Widgets:
+    - Pipeline success/failure trend (last 30 days)
+    - Last 7 runs status with durations
+    - Total rows processed yesterday by zone
+    - SLA tracker (runs completing under 25 min)
+    - Cost trajectory (last 30 days)
+
+DASHBOARD 2: NeoBank-Glue-Jobs
+  Per-job operational view
+  Widgets:
+    - Each of 13 Glue jobs duration trend
+    - DPU hours per job
+    - Failure rate per job
+    - Concurrent runs over time
+
+DASHBOARD 3: NeoBank-Data-Quality
+  DQ engineer view
+  Widgets:
+    - DQ pass rate per table (last 30 days)
+    - Quarantined rows trend
+    - Top failing DQ rules
+    - Row count vs baseline (anomaly detection band)
+
+RUN: python step1_create_dashboards.py
+
+VIEW IN CONSOLE:
+  CloudWatch → Dashboards → 3 dashboards listed
+  https://ap-south-1.console.aws.amazon.com/cloudwatch/home?region=ap-south-1#dashboards
+
+
+STEP 2 — CREATE 12 CLOUDWATCH ALARMS
+══════════════════════════════════════
+
+Script: step2_create_alarms.py
+
+CRITICAL alarms (alert immediately):
+  alarm_pipeline_failed            → Step Functions ExecutionsFailed >= 1
+  alarm_pipeline_timeout           → ExecutionTime > 1800 sec (30 min)
+  alarm_multiple_glue_failures     → 2+ Glue jobs failed in 1 hour
+
+WARNING alarms (review next morning):
+  alarm_slow_job_silver_txn        → bronze_to_silver_transactions > 10 min
+  alarm_dq_pass_rate_low           → DQ pass rate < 95%
+  alarm_quarantine_spike           → Quarantine rows > 50 in any table
+  alarm_redshift_copy_failed       → Redshift Data API status = FAILED
+  alarm_row_count_anomaly          → Anomaly band breached
+  alarm_high_dpu                   → Glue DPU hours > 5 in single run
+
+INFO alarms (track trends):
+  alarm_daily_success              → ExecutionsSucceeded = 1 daily
+  alarm_silver_row_count           → Daily silver layer rows
+  alarm_gold_row_count             → Daily gold layer rows
+
+All alarms publish to SNS topic neo-bank-etl-alerts.
+
+RUN: python step2_create_alarms.py
+
+
+STEP 3 — DEPLOY CUSTOM METRICS LAMBDA
+═══════════════════════════════════════
+
+Script: step3_deploy_metrics_lambda.py
+
+What this Lambda does:
+  Triggered by EventBridge after each pipeline completion
+  Reads all JSON files from s3://neo-bank-datalake/metadata/dq_results/
+  Parses DQ rule results per table
+  Publishes custom CloudWatch metrics:
+
+    Namespace: AmerispriseBank/ETL
+    Metrics:
+      DQRulesPassed         (per table)
+      DQRulesFailed         (per table)
+      DQPassRate            (per table, percentage)
+      RowsProcessed         (per zone: bronze, silver, gold)
+      QuarantinedRows       (per table)
+      JobDuration           (per Glue job, seconds)
+
+  Also reads S3 to count rows in each silver/gold partition for the run_date
+  Publishes RowsProcessed metric
+
+Lambda function name:    neo-bank-metrics-publisher
+Runtime:                 Python 3.11
+Memory:                  512 MB
+Timeout:                 5 minutes
+IAM role:                AmerispriseBankMetricsLambdaRole
+Trigger:                 EventBridge rule on Step Functions success
+
+RUN: python step3_deploy_metrics_lambda.py
+
+What gets created:
+  - Lambda function with code
+  - IAM role with policies for S3 read, CloudWatch put, Step Functions describe
+  - EventBridge rule to trigger after pipeline succeeds
+
+
+STEP 4 — SETUP ANOMALY DETECTION
+══════════════════════════════════
+
+Script: step4_setup_anomaly_detection.py
+
+What it creates:
+  CloudWatch Anomaly Detectors on these custom metrics:
+
+  Metric: AmerispriseBank/ETL/RowsProcessed (per table)
+    - Auto-learns baseline over 14 days
+    - Alarms if today's count deviates > 2 standard deviations
+
+  Metric: AmerispriseBank/ETL/JobDuration (per Glue job)
+    - Auto-learns expected duration
+    - Alarms if any job runs >2 std devs slower
+
+Anomaly detectors are different from threshold alarms:
+  Threshold:  "alarm if rows < 1000"  (manual setting, brittle)
+  Anomaly:    "alarm if rows fall outside normal range"  (auto-learning)
+
+For a banking pipeline that grows over time, anomaly detection is much
+more reliable than fixed thresholds.
+
+RUN: python step4_setup_anomaly_detection.py
+
+NOTE: Anomaly detectors need 7-14 days of metric data to start working.
+      Initially they will not fire alarms — this is expected.
+
+
+STEP 5 — VERIFY MONITORING
+════════════════════════════
+
+Script: step5_verify_monitoring.py
+
+What it checks:
+  [1] All 3 dashboards exist
+  [2] All 12 alarms exist and are enabled
+  [3] Metrics Lambda is deployed and triggers correctly
+  [4] EventBridge rule for Lambda exists
+  [5] SNS subscriptions are confirmed
+  [6] Custom metrics are publishing (after first pipeline run)
+  [7] Anomaly detectors created
+
+RUN: python step5_verify_monitoring.py
+
+
+SAMPLE ALERTS YOU WILL RECEIVE
+════════════════════════════════
+
+CRITICAL ALERT:
+  Subject: [CRITICAL] NeoBank ETL Pipeline FAILED
+  Body:    State machine: neo-bank-etl-orchestrator
+           Failed state: SilverLayerParallel/SilverTransactions
+           Error: Glue.ConcurrentRunsExceededException
+           Action: https://console.aws.amazon.com/states/...
+           Redrive available within 14 days
+
+WARNING ALERT:
+  Subject: [WARNING] DQ Pass Rate Dropped
+  Body:    Table: silver_credit_bureau
+           Pass rate: 87% (threshold 95%)
+           Quarantined rows: 67 (avg: 5)
+           Top failing rule: ColumnValues "credit_score" >= 300
+           Investigate quarantine/credit_bureau_reports/
+
+ANOMALY ALERT:
+  Subject: [ANOMALY] Row count outside expected range
+  Body:    Table: fact_transactions
+           Today: 24,500 rows
+           Expected: 28,000-32,000 (95% confidence)
+           Possible causes: source data issue, partial load
+
+
+CONSOLE WALKTHROUGH
+═══════════════════════
+
+Daily morning routine (5 minutes):
+
+1. Open NeoBank-Pipeline-Overview dashboard
+   - Last night's run: green check or red X?
+   - Duration vs SLA?
+   - Row count anomalies?
+
+2. If red X — open NeoBank-Glue-Jobs dashboard
+   - Identify which job failed
+   - Click through to Step Functions execution
+   - Use Redrive if appropriate
+
+3. Open NeoBank-Data-Quality dashboard weekly
+   - DQ pass rate trends
+   - Quarantine row trends
+   - Identify problematic source data
+
+
+COST ESTIMATE
+══════════════
+
+| Component                       | Monthly  | Cost    |
+|---------------------------------|----------|---------|
+| CloudWatch Dashboards (3)       | 3        | $9.00   |
+|   ($3 per dashboard per month)  |          |         |
+| Custom metrics (~50 unique)     | varies   | $1.50   |
+|   ($0.30 per metric per month)  |          |         |
+| Standard alarms (12)            | 12       | $1.20   |
+|   ($0.10 per alarm per month)   |          |         |
+| Anomaly detectors (2)           | 2        | $0.30   |
+|   ($0.10 per anomaly metric/mo) |          |         |
+| Metrics Lambda (30 invocations) | 30/mo    | $0.00   |
+|   (under free tier)             |          |         |
+| SNS notifications               | <100     | $0.00   |
+|                                 |          |         |
+| Phase 8 incremental cost        |          | ~$12/mo |
+
+To reduce cost:
+  - Combine 3 dashboards into 1: saves $6/month
+  - Drop info-level alarms: saves $0.30/month
+  - Skip anomaly detectors: saves $0.30/month
+  - Total possible saving: ~$7/month
+
+For a learning project, consider creating only 1 dashboard
+and 5 critical alarms. Total cost would be ~$3.50/month.
+
+
+PROJECT COMPLETE — WHAT YOU HAVE BUILT
+═══════════════════════════════════════════
+
+End-to-end production-grade banking data engineering pipeline:
+
+INGESTION:
+  - 4 RDS SQL Server tables → S3 bronze (Parquet)
+  - 2 CSV sources → S3 bronze (Parquet)
+  - 9 metadata columns added (lineage tracking)
+
+DATA QUALITY:
+  - 6 Glue Visual ETL silver jobs
+  - 7 DQ rules per table with PASS/FAIL split
+  - PII masking (PAN, email, phone)
+  - Quarantine zone for failed records
+
+DATA WAREHOUSE:
+  - 7 Glue Visual ETL gold jobs (star schema)
+  - 4 dimensions + 3 facts + 4 aggregations
+  - Surrogate keys, slowly changing dimensions
+  - dim_date with fiscal year support
+
+ANALYTICS:
+  - Redshift Serverless with 11 tables
+  - 4 pre-built analytical views
+  - Athena for ad-hoc S3 queries
+  - Apache Superset dashboard
+
+ORCHESTRATION:
+  - Step Functions workflow
+  - Daily 02:00 IST schedule
+  - Parallel + sequential job dependencies
+  - Retry with exponential backoff + jitter
+
+MONITORING:
+  - 3 CloudWatch dashboards
+  - 12 alarms (critical + warning + info)
+  - Custom DQ metrics via Lambda
+  - Anomaly detection on row counts
+  - SNS email/SMS alerting
+
+
+WHAT TO LEARN NEXT
+════════════════════
+
+  - dbt for SQL-based transformations (alternative to Glue)
+  - Apache Airflow / MWAA (alternative to Step Functions)
+  - Iceberg table format (replaces plain Parquet)
+  - DataHub / OpenMetadata (data catalog)
+  - dbt-expectations / Soda for code-based DQ
+  - Kafka + Kinesis for streaming ingestion
+  - Lake Formation for fine-grained access control
+
+
+CONGRATULATIONS!
+═══════════════════
+You have built and operated a complete production-grade
+banking data engineering pipeline on AWS.
+
+This portfolio project covers:
+  - Medallion architecture (Bronze/Silver/Gold)
+  - Data quality engineering
+  - Star schema dimensional modeling
+  - Cloud data warehousing
+  - Workflow orchestration
+  - Production monitoring + alerting
+
+You can now confidently discuss any of these topics in
+data engineering interviews and apply them to real banking
+or fintech projects.
