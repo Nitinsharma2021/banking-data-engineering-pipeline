@@ -1,0 +1,13 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "InvokeStateMachine",
+            "Effect": "Allow",
+            "Action": [
+                "states:StartExecution"
+            ],
+            "Resource": "arn:aws:states:ap-south-1:ACCOUNT_ID:stateMachine:neo-bank-etl-orchestrator"
+        }
+    ]
+}

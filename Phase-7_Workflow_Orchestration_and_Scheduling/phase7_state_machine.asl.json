@@ -1,0 +1,410 @@
+{
+  "Comment": "Ameriprise Bank Daily ETL Orchestrator — silver fan-out, gold dim chain, fact fan-out, aggregations, Redshift COPY",
+  "StartAt": "SilverLayerParallel",
+  "TimeoutSeconds": 14400,
+  "States": {
+    "SilverLayerParallel": {
+      "Type": "Parallel",
+      "ResultPath": "$.silverResults",
+      "Branches": [
+        {
+          "StartAt": "SilverCustomers",
+          "States": {
+            "SilverCustomers": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "bronze_to_silver_customers",
+                "Arguments": { "--run_date.$": "$.run_date" }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed", "States.Timeout"],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0,
+                "JitterStrategy": "FULL"
+              }],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "SilverAccounts",
+          "States": {
+            "SilverAccounts": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "bronze_to_silver_accounts",
+                "Arguments": { "--run_date.$": "$.run_date" }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed", "States.Timeout"],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0,
+                "JitterStrategy": "FULL"
+              }],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "SilverTransactions",
+          "States": {
+            "SilverTransactions": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "bronze_to_silver_transactions",
+                "Arguments": { "--run_date.$": "$.run_date" }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed", "States.Timeout"],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0,
+                "JitterStrategy": "FULL"
+              }],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "SilverPaymentGateway",
+          "States": {
+            "SilverPaymentGateway": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "bronze_to_silver_payment_gateway",
+                "Arguments": { "--run_date.$": "$.run_date" }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed", "States.Timeout"],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0,
+                "JitterStrategy": "FULL"
+              }],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "SilverCreditBureau",
+          "States": {
+            "SilverCreditBureau": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "bronze_to_silver_credit_bureau",
+                "Arguments": { "--run_date.$": "$.run_date" }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed", "States.Timeout"],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0,
+                "JitterStrategy": "FULL"
+              }],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "SilverBranches",
+          "States": {
+            "SilverBranches": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "bronze_to_silver_branches",
+                "Arguments": { "--run_date.$": "$.run_date" }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed", "States.Timeout"],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0,
+                "JitterStrategy": "FULL"
+              }],
+              "End": true
+            }
+          }
+        }
+      ],
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyFail"
+      }],
+      "Next": "GoldDimBranch"
+    },
+
+    "GoldDimBranch": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "silver_to_gold_dim_branch",
+        "Arguments": { "--run_date.$": "$.run_date" }
+      },
+      "Retry": [{
+        "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed"],
+        "IntervalSeconds": 60,
+        "MaxAttempts": 3,
+        "BackoffRate": 2.0,
+        "JitterStrategy": "FULL"
+      }],
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyFail"
+      }],
+      "ResultPath": "$.dimBranch",
+      "Next": "GoldDimCustomer"
+    },
+
+    "GoldDimCustomer": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "silver_to_gold_dim_customer",
+        "Arguments": { "--run_date.$": "$.run_date" }
+      },
+      "Retry": [{
+        "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed"],
+        "IntervalSeconds": 60,
+        "MaxAttempts": 3,
+        "BackoffRate": 2.0,
+        "JitterStrategy": "FULL"
+      }],
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyFail"
+      }],
+      "ResultPath": "$.dimCustomer",
+      "Next": "GoldDimAccount"
+    },
+
+    "GoldDimAccount": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "silver_to_gold_dim_account",
+        "Arguments": { "--run_date.$": "$.run_date" }
+      },
+      "Retry": [{
+        "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed"],
+        "IntervalSeconds": 60,
+        "MaxAttempts": 3,
+        "BackoffRate": 2.0,
+        "JitterStrategy": "FULL"
+      }],
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyFail"
+      }],
+      "ResultPath": "$.dimAccount",
+      "Next": "FactLayerParallel"
+    },
+
+    "FactLayerParallel": {
+      "Type": "Parallel",
+      "ResultPath": "$.factResults",
+      "Branches": [
+        {
+          "StartAt": "FactTransactions",
+          "States": {
+            "FactTransactions": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "silver_to_gold_fact_transactions",
+                "Arguments": { "--run_date.$": "$.run_date" }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed"],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0,
+                "JitterStrategy": "FULL"
+              }],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "FactPayments",
+          "States": {
+            "FactPayments": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "silver_to_gold_fact_payments",
+                "Arguments": { "--run_date.$": "$.run_date" }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed"],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0,
+                "JitterStrategy": "FULL"
+              }],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "FactCreditRisk",
+          "States": {
+            "FactCreditRisk": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "silver_to_gold_fact_credit_risk",
+                "Arguments": { "--run_date.$": "$.run_date" }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed"],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0,
+                "JitterStrategy": "FULL"
+              }],
+              "End": true
+            }
+          }
+        }
+      ],
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyFail"
+      }],
+      "Next": "GoldAggregations"
+    },
+
+    "GoldAggregations": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "silver_to_gold_aggregations",
+        "Arguments": { "--run_date.$": "$.run_date" }
+      },
+      "Retry": [{
+        "ErrorEquals": ["Glue.ConcurrentRunsExceededException", "Glue.AWSGlueException", "States.TaskFailed"],
+        "IntervalSeconds": 60,
+        "MaxAttempts": 3,
+        "BackoffRate": 2.0,
+        "JitterStrategy": "FULL"
+      }],
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyFail"
+      }],
+      "ResultPath": "$.aggregations",
+      "Next": "RedshiftCopyStart"
+    },
+
+    "RedshiftCopyStart": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:redshiftdata:batchExecuteStatement",
+      "Parameters": {
+        "WorkgroupName": "neo-bank-workgroup",
+        "Database": "dev",
+        "Sqls": [
+          "TRUNCATE TABLE banking.dim_branch;",
+          "COPY banking.dim_branch FROM 's3://neo-bank-datalake/gold/dim_branch/' IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/AmerispriseBankGlueRole' FORMAT AS PARQUET SERIALIZETOJSON;",
+          "TRUNCATE TABLE banking.dim_customer;",
+          "COPY banking.dim_customer FROM 's3://neo-bank-datalake/gold/dim_customer/' IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/AmerispriseBankGlueRole' FORMAT AS PARQUET SERIALIZETOJSON;",
+          "TRUNCATE TABLE banking.dim_account;",
+          "COPY banking.dim_account FROM 's3://neo-bank-datalake/gold/dim_account/' IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/AmerispriseBankGlueRole' FORMAT AS PARQUET SERIALIZETOJSON;",
+          "TRUNCATE TABLE banking.fact_transactions;",
+          "COPY banking.fact_transactions FROM 's3://neo-bank-datalake/gold/fact_transactions/' IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/AmerispriseBankGlueRole' FORMAT AS PARQUET SERIALIZETOJSON;",
+          "TRUNCATE TABLE banking.fact_payments;",
+          "COPY banking.fact_payments FROM 's3://neo-bank-datalake/gold/fact_payments/' IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/AmerispriseBankGlueRole' FORMAT AS PARQUET SERIALIZETOJSON;",
+          "TRUNCATE TABLE banking.fact_credit_risk;",
+          "COPY banking.fact_credit_risk FROM 's3://neo-bank-datalake/gold/fact_credit_risk/' IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/AmerispriseBankGlueRole' FORMAT AS PARQUET SERIALIZETOJSON;",
+          "TRUNCATE TABLE banking.agg_daily_balances;",
+          "COPY banking.agg_daily_balances FROM 's3://neo-bank-datalake/gold/agg_daily_balances/' IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/AmerispriseBankGlueRole' FORMAT AS PARQUET SERIALIZETOJSON;",
+          "TRUNCATE TABLE banking.agg_monthly_summary;",
+          "COPY banking.agg_monthly_summary FROM 's3://neo-bank-datalake/gold/agg_monthly_summary/' IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/AmerispriseBankGlueRole' FORMAT AS PARQUET SERIALIZETOJSON;",
+          "TRUNCATE TABLE banking.agg_branch_performance;",
+          "COPY banking.agg_branch_performance FROM 's3://neo-bank-datalake/gold/agg_branch_performance/' IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/AmerispriseBankGlueRole' FORMAT AS PARQUET SERIALIZETOJSON;",
+          "TRUNCATE TABLE banking.agg_customer_360;",
+          "COPY banking.agg_customer_360 FROM 's3://neo-bank-datalake/gold/agg_customer_360/' IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/AmerispriseBankGlueRole' FORMAT AS PARQUET SERIALIZETOJSON;"
+        ]
+      },
+      "ResultPath": "$.rsLoad",
+      "Retry": [{
+        "ErrorEquals": ["RedshiftData.ActiveStatementsExceededException", "RedshiftData.InternalServerException"],
+        "IntervalSeconds": 30,
+        "MaxAttempts": 3,
+        "BackoffRate": 2.0,
+        "JitterStrategy": "FULL"
+      }],
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyFail"
+      }],
+      "Next": "WaitForRedshift"
+    },
+
+    "WaitForRedshift": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "DescribeRedshiftStatement"
+    },
+
+    "DescribeRedshiftStatement": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:redshiftdata:describeStatement",
+      "Parameters": { "Id.$": "$.rsLoad.Id" },
+      "ResultPath": "$.rsStatus",
+      "Next": "RedshiftChoice"
+    },
+
+    "RedshiftChoice": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.rsStatus.Status", "StringEquals": "FINISHED", "Next": "NotifySuccess" },
+        { "Variable": "$.rsStatus.Status", "StringEquals": "FAILED",   "Next": "NotifyFail" },
+        { "Variable": "$.rsStatus.Status", "StringEquals": "ABORTED",  "Next": "NotifyFail" }
+      ],
+      "Default": "WaitForRedshift"
+    },
+
+    "NotifySuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:ap-south-1:ACCOUNT_ID:neo-bank-etl-alerts",
+        "Subject": "Ameriprise Bank Daily ETL — SUCCESS",
+        "Message.$": "$"
+      },
+      "End": true
+    },
+
+    "NotifyFail": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:ap-south-1:ACCOUNT_ID:neo-bank-etl-alerts",
+        "Subject": "Ameriprise Bank Daily ETL — FAILED",
+        "Message.$": "$"
+      },
+      "Next": "FailExecution"
+    },
+
+    "FailExecution": {
+      "Type": "Fail",
+      "Error": "ETLPipelineFailed",
+      "Cause": "See SNS notification and execution graph for the failed branch."
+    }
+  }
+}
